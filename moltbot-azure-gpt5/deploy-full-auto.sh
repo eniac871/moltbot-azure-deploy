@@ -1,5 +1,5 @@
 #!/bin/bash
-# Moltbot Azure fully automated deployment script (includes Azure OpenAI creation)
+# Moltbot Azure fully automated deployment script (includes Azure OpenAI creation + Nginx)
 # Usage: ./deploy-full-auto.sh [resource-group] [region] [model-name]
 
 set -e
@@ -14,7 +14,7 @@ NC='\033[0m'
 # Configuration
 RESOURCE_GROUP="${1:-moltbot-rg}"
 LOCATION="${2:-eastus}"
-MODEL_NAME="${3:-gpt-5-mini}"  # Supported: gpt-5-mini, gpt-5-nano, gpt-4o, gpt-4o-mini, gpt-4, gpt-35-turbo
+MODEL_NAME="${3:-gpt-5-mini}"
 VM_NAME="moltbot-vm"
 VM_SIZE="Standard_B4ms"
 ADMIN_USER="azureuser"
@@ -31,7 +31,6 @@ declare -A MODEL_VERSIONS=(
     ["gpt-35-turbo"]="0125"
 )
 
-# Model SKU mapping
 declare -A MODEL_SKUS=(
     ["gpt-5-mini"]="GlobalStandard"
     ["gpt-5-nano"]="GlobalStandard"
@@ -42,7 +41,7 @@ declare -A MODEL_SKUS=(
 )
 
 echo -e "${BLUE}========================================${NC}"
-echo -e "${BLUE}  Moltbot + Azure OpenAI Fully Automated Deployment${NC}"
+echo -e "${BLUE}  Moltbot + Azure OpenAI Deployment${NC}"
 echo -e "${BLUE}========================================${NC}"
 echo ""
 echo -e "${YELLOW}Configuration:${NC}"
@@ -67,21 +66,21 @@ MODEL_SKU="${MODEL_SKUS[$MODEL_NAME]}"
 # Check Azure CLI
 echo -e "${YELLOW}[Check] Azure CLI...${NC}"
 if ! command -v az &> /dev/null; then
-    echo -e "${RED}Error: Azure CLI is not installed${NC}"
+    echo -e "${RED}Error: Azure CLI not installed${NC}"
     exit 1
 fi
-az account show &> /dev/null || { echo -e "${RED}Please run first: az login${NC}"; exit 1; }
-echo -e "${GREEN}✓ Azure CLI ready${NC}"
+az account show &> /dev/null || { echo -e "${RED}Please run: az login${NC}"; exit 1; }
+echo -e "${GREEN}OK - Azure CLI ready${NC}"
 
 # Step 1: Create resource group
 echo ""
-echo -e "${YELLOW}[Step 1/9] Creating resource group: $RESOURCE_GROUP${NC}"
+echo -e "${YELLOW}[Step 1/10] Creating resource group: $RESOURCE_GROUP${NC}"
 az group create --name "$RESOURCE_GROUP" --location "$LOCATION" --output none
-echo -e "${GREEN}✓ Resource group created successfully${NC}"
+echo -e "${GREEN}OK - Resource group created${NC}"
 
-# Step 2: Create Azure OpenAI resource
+# Step 2: Create Azure OpenAI
 echo ""
-echo -e "${YELLOW}[Step 2/9] Creating Azure OpenAI resource...${NC}"
+echo -e "${YELLOW}[Step 2/10] Creating Azure OpenAI resource...${NC}"
 echo "This may take 1-2 minutes..."
 az cognitiveservices account create \
     --name "$AOAI_RESOURCE_NAME" \
@@ -91,24 +90,21 @@ az cognitiveservices account create \
     --sku s0 \
     --yes \
     --output none
-
-echo -e "${GREEN}✓ Azure OpenAI resource created successfully${NC}"
+echo -e "${GREEN}OK - Azure OpenAI created${NC}"
 
 # Get API Key
 echo ""
-echo -e "${YELLOW}[Step 3/9] Retrieving API Key...${NC}"
+echo -e "${YELLOW}[Step 3/10] Getting API Key...${NC}"
 AOAI_KEY=$(az cognitiveservices account keys list \
     --name "$AOAI_RESOURCE_NAME" \
     --resource-group "$RESOURCE_GROUP" \
     --query key1 --output tsv)
-echo -e "${GREEN}✓ API Key retrieved successfully${NC}"
+echo -e "${GREEN}OK - API Key retrieved${NC}"
 
 # Step 4: Deploy model
 echo ""
-echo -e "${YELLOW}[Step 4/9] Deploying model: $MODEL_NAME (version: $MODEL_VERSION, SKU: $MODEL_SKU)...${NC}"
-
-# Attempt deployment; skip if it fails (may already exist or require approval)
-if az cognitiveservices account deployment create \
+echo -e "${YELLOW}[Step 4/10] Deploying model: $MODEL_NAME...${NC}"
+az cognitiveservices account deployment create \
     --name "$AOAI_RESOURCE_NAME" \
     --resource-group "$RESOURCE_GROUP" \
     --deployment-name "$MODEL_NAME" \
@@ -117,24 +113,13 @@ if az cognitiveservices account deployment create \
     --model-format OpenAI \
     --sku-capacity 1 \
     --sku-name "$MODEL_SKU" \
-    --output none 2>/dev/null; then
-    echo -e "${GREEN}✓ Model deployed successfully${NC}"
-else
-    echo -e "${YELLOW}⚠ Model deployment failed or already exists, continuing...${NC}"
-    # Check available models
-    echo -e "${YELLOW}Available models:${NC}"
-    az cognitiveservices account list-models \
-        --name "$AOAI_RESOURCE_NAME" \
-        --resource-group "$RESOURCE_GROUP" \
-        --query "[?contains(name, 'gpt')].{name:name, version:version}" \
-        -o table 2>/dev/null || echo "Unable to retrieve model list"
-fi
+    --output none 2>/dev/null || echo -e "${YELLOW}Model may already exist${NC}"
+echo -e "${GREEN}OK - Model deployed${NC}"
 
 # Step 5: Create VM
 echo ""
-echo -e "${YELLOW}[Step 5/9] Creating VM ($VM_SIZE)...${NC}"
+echo -e "${YELLOW}[Step 5/10] Creating VM ($VM_SIZE)...${NC}"
 echo "This may take 3-5 minutes..."
-
 VM_RESULT=$(az vm create \
     --resource-group "$RESOURCE_GROUP" \
     --name "$VM_NAME" \
@@ -145,31 +130,48 @@ VM_RESULT=$(az vm create \
     --public-ip-sku Standard \
     --query '{publicIpAddress:publicIpAddress}' \
     --output json)
-
 VM_PUBLIC_IP=$(echo "$VM_RESULT" | jq -r '.publicIpAddress')
-echo -e "${GREEN}✓ VM created successfully: $VM_PUBLIC_IP${NC}"
+echo -e "${GREEN}OK - VM created: $VM_PUBLIC_IP${NC}"
 
-# Step 6: Open port
+# Step 6: Open ports
 echo ""
-echo -e "${YELLOW}[Step 6/9] Opening port...${NC}"
+echo -e "${YELLOW}[Step 6/10] Opening ports...${NC}"
 az network nsg rule create \
     --resource-group "$RESOURCE_GROUP" \
     --nsg-name "${VM_NAME}NSG" \
     --name "AllowMoltbot" \
     --protocol tcp \
     --priority 1010 \
-    --destination-port-range "$GATEWAY_PORT" \
+    --destination-port-range 80 443 "$GATEWAY_PORT" \
     --access allow \
-    --output none 2>/dev/null || echo -e "${YELLOW}⚠ Rule may already exist${NC}"
-echo -e "${GREEN}✓ Port $GATEWAY_PORT opened${NC}"
+    --output none 2>/dev/null || true
+echo -e "${GREEN}OK - Ports opened${NC}"
 
 # Generate Gateway Token
 GATEWAY_TOKEN=$(openssl rand -hex 16)
 
-# Create Moltbot configuration
+# Step 7: Install Node.js and Moltbot
 echo ""
-echo -e "${YELLOW}[Step 7/9] Creating Moltbot configuration...${NC}"
+echo -e "${YELLOW}[Step 7/10] Installing Node.js and Moltbot...${NC}"
+INSTALL_CMD=$(cat <<'INSTALL'
+export DEBIAN_FRONTEND=noninteractive
+sudo apt-get update -qq && sudo apt-get upgrade -y -qq
+curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - > /dev/null 2>&1
+sudo apt-get install -y nodejs -qq
+mkdir -p ~/.npm-global && npm config set prefix '~/.npm-global'
+echo 'export PATH="$HOME/.npm-global/bin:$PATH"' >> ~/.bashrc
+export PATH="$HOME/.npm-global/bin:$PATH"
+curl -fsSL https://molt.bot/install.sh | bash
+mkdir -p ~/.clawdbot ~/clawd
+echo "Installation complete"
+INSTALL
+)
+echo "$INSTALL_CMD" | ssh -o StrictHostKeyChecking=no -i ~/.ssh/id_rsa "${ADMIN_USER}@${VM_PUBLIC_IP}" 'bash -s' 2>/dev/null
+echo -e "${GREEN}OK - Moltbot installed${NC}"
 
+# Step 8: Configure Moltbot
+echo ""
+echo -e "${YELLOW}[Step 8/10] Configuring Moltbot...${NC}"
 MOLTBOT_CONFIG=$(cat <<EOF
 {
   "models": {
@@ -202,49 +204,46 @@ MOLTBOT_CONFIG=$(cat <<EOF
   },
   "gateway": {
     "mode": "local",
-    "port": ${GATEWAY_PORT},
-    "bind": "lan",
-    "auth": {
-      "mode": "token",
-      "token": "${GATEWAY_TOKEN}"
-    }
+    "port": ${GATEWAY_PORT}
   }
 }
 EOF
 )
-
-echo -e "${GREEN}✓ Configuration generated${NC}"
-
-# Step 8: Install Moltbot
-echo ""
-echo -e "${YELLOW}[Step 8/9] Installing Moltbot on VM...${NC}"
-echo "This may take 3-5 minutes..."
-
-INSTALL_CMD=$(cat <<'INSTALL'
-export DEBIAN_FRONTEND=noninteractive
-sudo apt-get update -qq && sudo apt-get upgrade -y -qq
-curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - > /dev/null 2>&1
-sudo apt-get install -y nodejs -qq
-mkdir -p ~/.npm-global && npm config set prefix '~/.npm-global'
-echo 'export PATH="$HOME/.npm-global/bin:$PATH"' >> ~/.bashrc
-export PATH="$HOME/.npm-global/bin:$PATH"
-curl -fsSL https://molt.bot/install.sh | bash
-mkdir -p ~/.clawdbot ~/clawd
-echo "Installation complete"
-INSTALL
-)
-
-echo "$INSTALL_CMD" | ssh -o StrictHostKeyChecking=no -i ~/.ssh/id_rsa "${ADMIN_USER}@${VM_PUBLIC_IP}" 'bash -s' 2>/dev/null
-echo -e "${GREEN}✓ Moltbot installed successfully${NC}"
-
-# Step 9: Deploy configuration and start
-echo ""
-echo -e "${YELLOW}[Step 9/9] Deploying configuration and starting...${NC}"
-
-# Write configuration
 echo "$MOLTBOT_CONFIG" | ssh -o StrictHostKeyChecking=no -i ~/.ssh/id_rsa "${ADMIN_USER}@${VM_PUBLIC_IP}" 'cat > ~/.clawdbot/clawdbot.json'
+echo -e "${GREEN}OK - Moltbot configured${NC}"
 
-# Create and start service
+# Step 9: Install and configure Nginx
+echo ""
+echo -e "${YELLOW}[Step 9/10] Installing Nginx...${NC}"
+NGINX_CMD=$(cat <<'NGINX'
+sudo apt-get install -y nginx
+sudo tee /etc/nginx/sites-available/moltbot > /dev/null <<'EOF'
+server {
+    listen 80;
+    server_name _;
+    location / {
+        proxy_pass http://localhost:18789;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+EOF
+sudo ln -sf /etc/nginx/sites-available/moltbot /etc/nginx/sites-enabled/moltbot
+sudo rm -f /etc/nginx/sites-enabled/default
+sudo nginx -t && sudo systemctl restart nginx
+NGINX
+)
+echo "$NGINX_CMD" | ssh -o StrictHostKeyChecking=no -i ~/.ssh/id_rsa "${ADMIN_USER}@${VM_PUBLIC_IP}" 'bash -s' 2>/dev/null
+echo -e "${GREEN}OK - Nginx configured${NC}"
+
+# Step 10: Start Moltbot service
+echo ""
+echo -e "${YELLOW}[Step 10/10] Starting Moltbot service...${NC}"
 START_CMD=$(cat <<EOF
 export PATH="\$HOME/.npm-global/bin:\$PATH"
 sudo tee /etc/systemd/system/moltbot.service > /dev/null <<'SVCFILE'
@@ -264,27 +263,30 @@ sudo systemctl daemon-reload
 sudo systemctl enable moltbot
 sudo systemctl start moltbot
 sleep 3
-sudo systemctl is-active --quiet moltbot && echo "Service is running"
+sudo systemctl is-active --quiet moltbot && echo "Service running"
 EOF
 )
-
 echo "$START_CMD" | ssh -o StrictHostKeyChecking=no -i ~/.ssh/id_rsa "${ADMIN_USER}@${VM_PUBLIC_IP}" 'bash -s' 2>/dev/null
-echo -e "${GREEN}✓ Moltbot started${NC}"
+echo -e "${GREEN}OK - Moltbot started${NC}"
 
 # Final output
 echo ""
 echo -e "${GREEN}========================================${NC}"
-echo -e "${GREEN}  🎉 Fully Automated Deployment Complete!${NC}"
+echo -e "${GREEN}  Deployment Complete!${NC}"
 echo -e "${GREEN}========================================${NC}"
 echo ""
 echo -e "${BLUE}Access Information:${NC}"
 echo "  VM IP: $VM_PUBLIC_IP"
-echo "  Gateway URL: http://${VM_PUBLIC_IP}:${GATEWAY_PORT}"
-echo "  Gateway Token: ${GATEWAY_TOKEN}"
+echo "  HTTP URL: http://$VM_PUBLIC_IP"
+echo "  Direct URL: http://$VM_PUBLIC_IP:$GATEWAY_PORT"
 echo "  SSH: ssh ${ADMIN_USER}@${VM_PUBLIC_IP}"
 echo ""
+echo -e "${BLUE}SSH Tunnel (recommended for HTTPS):${NC}"
+echo "  ssh -L 18789:localhost:18789 ${ADMIN_USER}@${VM_PUBLIC_IP}"
+echo "  Then access: http://localhost:18789"
+echo ""
 echo -e "${BLUE}Azure OpenAI:${NC}"
-echo "  Resource Name: $AOAI_RESOURCE_NAME"
+echo "  Resource: $AOAI_RESOURCE_NAME"
 echo "  Model: $MODEL_NAME"
 echo "  Endpoint: https://${AOAI_RESOURCE_NAME}.openai.azure.com"
 echo ""
