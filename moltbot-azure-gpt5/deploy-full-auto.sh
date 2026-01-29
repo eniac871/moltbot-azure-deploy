@@ -1,6 +1,6 @@
 #!/bin/bash
 # Moltbot Azure 全自动部署脚本（包含 Azure OpenAI 创建）
-# 用法: ./deploy-full-auto.sh [资源组名] [区域]
+# 用法: ./deploy-full-auto.sh [资源组名] [区域] [模型名]
 
 set -e
 
@@ -14,17 +14,54 @@ NC='\033[0m'
 # 配置
 RESOURCE_GROUP="${1:-moltbot-rg}"
 LOCATION="${2:-eastus}"
+MODEL_NAME="${3:-gpt-5-mini}"  # 支持: gpt-5-mini, gpt-5-nano, gpt-4o, gpt-4o-mini, gpt-4, gpt-35-turbo
 VM_NAME="moltbot-vm"
 VM_SIZE="Standard_B4ms"
 ADMIN_USER="azureuser"
 GATEWAY_PORT="18789"
 AOAI_RESOURCE_NAME="moltbot-openai"
-AOAI_DEPLOYMENT_NAME="gpt-5"
+
+# 模型配置映射
+declare -A MODEL_VERSIONS=(
+    ["gpt-5-mini"]="2025-08-07"
+    ["gpt-5-nano"]="2025-08-07"
+    ["gpt-4o"]="2024-08-06"
+    ["gpt-4o-mini"]="2024-07-18"
+    ["gpt-4"]="0613"
+    ["gpt-35-turbo"]="0125"
+)
+
+declare -A MODEL_SKUS=(
+    ["gpt-5-mini"]="GlobalStandard"
+    ["gpt-5-nano"]="GlobalStandard"
+    ["gpt-4o"]="Standard"
+    ["gpt-4o-mini"]="Standard"
+    ["gpt-4"]="Standard"
+    ["gpt-35-turbo"]="Standard"
+)
 
 echo -e "${BLUE}========================================${NC}"
 echo -e "${BLUE}  Moltbot + Azure OpenAI 全自动部署${NC}"
 echo -e "${BLUE}========================================${NC}"
 echo ""
+echo -e "${YELLOW}配置:${NC}"
+echo "  资源组: $RESOURCE_GROUP"
+echo "  区域: $LOCATION"
+echo "  模型: $MODEL_NAME"
+echo ""
+
+# 验证模型
+if [[ -z "${MODEL_VERSIONS[$MODEL_NAME]}" ]]; then
+    echo -e "${RED}错误: 不支持的模型: $MODEL_NAME${NC}"
+    echo "支持的模型:"
+    for model in "${!MODEL_VERSIONS[@]}"; do
+        echo "  - $model"
+    done
+    exit 1
+fi
+
+MODEL_VERSION="${MODEL_VERSIONS[$MODEL_NAME]}"
+MODEL_SKU="${MODEL_SKUS[$MODEL_NAME]}"
 
 # 检查 Azure CLI
 echo -e "${YELLOW}[检查] Azure CLI...${NC}"
@@ -65,21 +102,32 @@ AOAI_KEY=$(az cognitiveservices account keys list \
     --query key1 --output tsv)
 echo -e "${GREEN}✓ API Key 获取成功${NC}"
 
-# 步骤 4: 部署 GPT-5 模型
+# 步骤 4: 部署模型
 echo ""
-echo -e "${YELLOW}[步骤 4/9] 部署 GPT-5 模型...${NC}"
-az cognitiveservices account deployment create \
+echo -e "${YELLOW}[步骤 4/9] 部署模型: $MODEL_NAME (版本: $MODEL_VERSION, SKU: $MODEL_SKU)...${NC}"
+
+# 尝试部署，如果失败则跳过（可能已存在或需要审批）
+if az cognitiveservices account deployment create \
     --name "$AOAI_RESOURCE_NAME" \
     --resource-group "$RESOURCE_GROUP" \
-    --deployment-name "$AOAI_DEPLOYMENT_NAME" \
-    --model-name gpt-5 \
-    --model-version "2025-07-01" \
+    --deployment-name "$MODEL_NAME" \
+    --model-name "$MODEL_NAME" \
+    --model-version "$MODEL_VERSION" \
     --model-format OpenAI \
     --sku-capacity 1 \
-    --sku-name Standard \
-    --output none 2>/dev/null || echo -e "${YELLOW}⚠ 模型可能已存在或需要审批${NC}"
-
-echo -e "${GREEN}✓ GPT-5 模型部署成功${NC}"
+    --sku-name "$MODEL_SKU" \
+    --output none 2>/dev/null; then
+    echo -e "${GREEN}✓ 模型部署成功${NC}"
+else
+    echo -e "${YELLOW}⚠ 模型部署失败或已存在，继续...${NC}"
+    # 检查可用模型
+    echo -e "${YELLOW}可用模型列表:${NC}"
+    az cognitiveservices account list-models \
+        --name "$AOAI_RESOURCE_NAME" \
+        --resource-group "$RESOURCE_GROUP" \
+        --query "[?contains(name, 'gpt')].{name:name, version:version}" \
+        -o table 2>/dev/null || echo "无法获取模型列表"
+fi
 
 # 步骤 5: 创建 VM
 echo ""
@@ -111,7 +159,7 @@ az network nsg rule create \
     --priority 1010 \
     --destination-port-range "$GATEWAY_PORT" \
     --access allow \
-    --output none
+    --output none 2>/dev/null || echo -e "${YELLOW}⚠ 规则可能已存在${NC}"
 echo -e "${GREEN}✓ 端口 $GATEWAY_PORT 已开放${NC}"
 
 # 生成 Gateway Token
@@ -132,8 +180,8 @@ MOLTBOT_CONFIG=$(cat <<EOF
         "api": "openai-completions",
         "models": [
           {
-            "id": "${AOAI_DEPLOYMENT_NAME}",
-            "name": "Azure GPT-5",
+            "id": "${MODEL_NAME}",
+            "name": "Azure ${MODEL_NAME}",
             "reasoning": true,
             "input": ["text", "image"],
             "contextWindow": 128000,
@@ -146,12 +194,13 @@ MOLTBOT_CONFIG=$(cat <<EOF
   "agents": {
     "defaults": {
       "model": {
-        "primary": "azure/${AOAI_DEPLOYMENT_NAME}"
+        "primary": "azure/${MODEL_NAME}"
       },
       "workspace": "/home/${ADMIN_USER}/clawd"
     }
   },
   "gateway": {
+    "mode": "local",
     "port": ${GATEWAY_PORT},
     "bind": "lan",
     "auth": {
@@ -235,6 +284,7 @@ echo "  SSH: ssh ${ADMIN_USER}@${VM_PUBLIC_IP}"
 echo ""
 echo -e "${BLUE}Azure OpenAI:${NC}"
 echo "  资源名: $AOAI_RESOURCE_NAME"
+echo "  模型: $MODEL_NAME"
 echo "  终结点: https://${AOAI_RESOURCE_NAME}.openai.azure.com"
 echo ""
 echo -e "${YELLOW}费用提醒:${NC}"
