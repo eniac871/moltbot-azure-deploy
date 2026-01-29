@@ -1,17 +1,17 @@
 #!/bin/bash
-# Moltbot Azure 全自动部署脚本
-# 用法: ./deploy.sh -r RESOURCE_NAME -k API_KEY -d DEPLOYMENT_NAME
+# Moltbot Azure fully automated deployment script
+# Usage: ./deploy.sh -r RESOURCE_NAME -k API_KEY -d DEPLOYMENT_NAME
 
 set -e
 
-# 颜色输出
+# Color output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# 默认配置
+# Default configuration
 RESOURCE_GROUP="moltbot-rg"
 VM_NAME="moltbot-vm"
 LOCATION="eastus"
@@ -19,35 +19,35 @@ VM_SIZE="Standard_B4ms"
 ADMIN_USER="azureuser"
 GATEWAY_PORT="18789"
 
-# Azure OpenAI 配置（通过参数传入）
+# Azure OpenAI configuration (passed via parameters)
 AZURE_RESOURCE_NAME=""
 AZURE_API_KEY=""
 AZURE_DEPLOYMENT="gpt-5"
 
-# 显示帮助
+# Show help
 show_help() {
-    echo -e "${BLUE}Moltbot Azure 全自动部署脚本${NC}"
+    echo -e "${BLUE}Moltbot Azure Fully Automated Deployment Script${NC}"
     echo ""
-    echo "用法: $0 [选项]"
+    echo "Usage: $0 [options]"
     echo ""
-    echo "必需参数:"
-    echo "  -r, --resource-name    Azure OpenAI 资源名"
+    echo "Required parameters:"
+    echo "  -r, --resource-name    Azure OpenAI resource name"
     echo "  -k, --api-key          Azure OpenAI API Key"
     echo ""
-    echo "可选参数:"
-    echo "  -d, --deployment       模型部署名 (默认: gpt-5)"
-    echo "  -g, --resource-group   Azure 资源组名 (默认: moltbot-rg)"
-    echo "  -v, --vm-name          VM 名称 (默认: moltbot-vm)"
-    echo "  -l, --location         Azure 区域 (默认: eastus)"
-    echo "  -s, --vm-size          VM 规格 (默认: Standard_B4ms)"
-    echo "  -h, --help             显示帮助"
+    echo "Optional parameters:"
+    echo "  -d, --deployment       Model deployment name (default: gpt-5)"
+    echo "  -g, --resource-group   Azure resource group name (default: moltbot-rg)"
+    echo "  -v, --vm-name          VM name (default: moltbot-vm)"
+    echo "  -l, --location         Azure region (default: eastus)"
+    echo "  -s, --vm-size          VM size (default: Standard_B4ms)"
+    echo "  -h, --help             Show help"
     echo ""
-    echo "示例:"
+    echo "Examples:"
     echo "  $0 -r my-openai-resource -k abc123xyz..."
     echo "  $0 -r my-openai-resource -k abc123xyz... -d gpt-5 -l westus2"
 }
 
-# 解析参数
+# Parse parameters
 while [[ $# -gt 0 ]]; do
     case $1 in
         -r|--resource-name)
@@ -83,66 +83,66 @@ while [[ $# -gt 0 ]]; do
             exit 0
             ;;
         *)
-            echo -e "${RED}错误: 未知参数 $1${NC}"
+            echo -e "${RED}Error: Unknown parameter $1${NC}"
             show_help
             exit 1
             ;;
     esac
 done
 
-# 验证必需参数
+# Validate required parameters
 if [[ -z "$AZURE_RESOURCE_NAME" || -z "$AZURE_API_KEY" ]]; then
-    echo -e "${RED}错误: 必须提供 Azure OpenAI 资源名和 API Key${NC}"
+    echo -e "${RED}Error: Azure OpenAI resource name and API Key are required${NC}"
     show_help
     exit 1
 fi
 
-# 生成随机 Gateway Token
+# Generate random Gateway Token
 GATEWAY_TOKEN=$(openssl rand -hex 32)
 
 echo -e "${BLUE}========================================${NC}"
-echo -e "${BLUE}  Moltbot Azure 全自动部署${NC}"
+echo -e "${BLUE}  Moltbot Azure Fully Automated Deployment${NC}"
 echo -e "${BLUE}========================================${NC}"
 echo ""
-echo -e "${YELLOW}配置信息:${NC}"
-echo "  资源组: $RESOURCE_GROUP"
-echo "  VM 名称: $VM_NAME"
-echo "  区域: $LOCATION"
-echo "  VM 规格: $VM_SIZE"
+echo -e "${YELLOW}Configuration:${NC}"
+echo "  Resource Group: $RESOURCE_GROUP"
+echo "  VM Name: $VM_NAME"
+echo "  Region: $LOCATION"
+echo "  VM Size: $VM_SIZE"
 echo "  Azure OpenAI: $AZURE_RESOURCE_NAME"
-echo "  模型部署: $AZURE_DEPLOYMENT"
+echo "  Model Deployment: $AZURE_DEPLOYMENT"
 echo ""
 
-# 步骤 1: 检查 Azure CLI
-echo -e "${BLUE}[步骤 1/8] 检查 Azure CLI...${NC}"
+# Step 1: Check Azure CLI
+echo -e "${BLUE}[Step 1/8] Checking Azure CLI...${NC}"
 if ! command -v az &> /dev/null; then
-    echo -e "${RED}错误: Azure CLI 未安装${NC}"
-    echo "请先安装 Azure CLI: https://docs.microsoft.com/cli/azure/install-azure-cli"
+    echo -e "${RED}Error: Azure CLI is not installed${NC}"
+    echo "Please install Azure CLI first: https://docs.microsoft.com/cli/azure/install-azure-cli"
     exit 1
 fi
 
-# 检查登录状态
-echo "检查 Azure 登录状态..."
+# Check login status
+echo "Checking Azure login status..."
 az account show &> /dev/null || {
-    echo -e "${YELLOW}需要登录 Azure...${NC}"
+    echo -e "${YELLOW}Azure login required...${NC}"
     az login
 }
 
-echo -e "${GREEN}✓ Azure CLI 就绪${NC}"
+echo -e "${GREEN}✓ Azure CLI ready${NC}"
 echo ""
 
-# 步骤 2: 创建资源组
-echo -e "${BLUE}[步骤 2/8] 创建资源组...${NC}"
+# Step 2: Create resource group
+echo -e "${BLUE}[Step 2/8] Creating resource group...${NC}"
 az group create \
     --name "$RESOURCE_GROUP" \
     --location "$LOCATION" \
     --output none
-echo -e "${GREEN}✓ 资源组 $RESOURCE_GROUP 创建成功${NC}"
+echo -e "${GREEN}✓ Resource group $RESOURCE_GROUP created successfully${NC}"
 echo ""
 
-# 步骤 3: 创建 VM
-echo -e "${BLUE}[步骤 3/8] 创建 VM ($VM_SIZE)...${NC}"
-echo "这可能需要 2-5 分钟..."
+# Step 3: Create VM
+echo -e "${BLUE}[Step 3/8] Creating VM ($VM_SIZE)...${NC}"
+echo "This may take 2-5 minutes..."
 
 VM_RESULT=$(az vm create \
     --resource-group "$RESOURCE_GROUP" \
@@ -157,12 +157,12 @@ VM_RESULT=$(az vm create \
 
 VM_PUBLIC_IP=$(echo "$VM_RESULT" | jq -r '.publicIpAddress')
 
-echo -e "${GREEN}✓ VM 创建成功${NC}"
-echo "  公网 IP: $VM_PUBLIC_IP"
+echo -e "${GREEN}✓ VM created successfully${NC}"
+echo "  Public IP: $VM_PUBLIC_IP"
 echo ""
 
-# 步骤 4: 开放端口
-echo -e "${BLUE}[步骤 4/8] 开放端口 $GATEWAY_PORT...${NC}"
+# Step 4: Open port
+echo -e "${BLUE}[Step 4/8] Opening port $GATEWAY_PORT...${NC}"
 az network nsg rule create \
     --resource-group "$RESOURCE_GROUP" \
     --nsg-name "${VM_NAME}NSG" \
@@ -173,11 +173,11 @@ az network nsg rule create \
     --access allow \
     --output none
 
-echo -e "${GREEN}✓ 端口 $GATEWAY_PORT 已开放${NC}"
+echo -e "${GREEN}✓ Port $GATEWAY_PORT opened${NC}"
 echo ""
 
-# 步骤 5: 生成 Moltbot 配置
-echo -e "${BLUE}[步骤 5/8] 生成 Moltbot 配置...${NC}"
+# Step 5: Generate Moltbot configuration
+echo -e "${BLUE}[Step 5/8] Generating Moltbot configuration...${NC}"
 
 MOLTBOT_CONFIG=$(cat <<EOF
 {
@@ -241,77 +241,77 @@ MOLTBOT_CONFIG=$(cat <<EOF
 EOF
 )
 
-echo -e "${GREEN}✓ 配置生成成功${NC}"
+echo -e "${GREEN}✓ Configuration generated successfully${NC}"
 echo ""
 
-# 步骤 6: 安装 Node.js 和 Moltbot
-echo -e "${BLUE}[步骤 6/8] 在 VM 上安装 Node.js 和 Moltbot...${NC}"
-echo "这可能需要 3-5 分钟..."
+# Step 6: Install Node.js and Moltbot
+echo -e "${BLUE}[Step 6/8] Installing Node.js and Moltbot on VM...${NC}"
+echo "This may take 3-5 minutes..."
 
-# 创建安装脚本
+# Create install script
 INSTALL_SCRIPT=$(cat <<'ENDSCRIPT'
 #!/bin/bash
 set -e
 
-# 更新系统
+# Update system
 export DEBIAN_FRONTEND=noninteractive
 sudo apt-get update -qq
 sudo apt-get upgrade -y -qq
 
-# 安装 Node.js 22
+# Install Node.js 22
 curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - > /dev/null 2>&1
 sudo apt-get install -y nodejs -qq
 
-# 验证 Node.js
+# Verify Node.js
 node --version
 npm --version
 
-# 配置 npm 全局路径
+# Configure npm global path
 mkdir -p ~/.npm-global
 npm config set prefix '~/.npm-global'
 echo 'export PATH="$HOME/.npm-global/bin:$PATH"' >> ~/.bashrc
 export PATH="$HOME/.npm-global/bin:$PATH"
 
-# 安装 Moltbot
+# Install Moltbot
 curl -fsSL https://molt.bot/install.sh | bash
 
-# 创建配置目录
+# Create config directories
 mkdir -p ~/.clawdbot
 mkdir -p ~/clawd
 
-echo "安装完成!"
+echo "Installation complete!"
 ENDSCRIPT
 )
 
-# 复制并执行安装脚本
+# Copy and execute install script
 echo "$INSTALL_SCRIPT" | ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
     -i ~/.ssh/id_rsa \
     "${ADMIN_USER}@${VM_PUBLIC_IP}" \
     'bash -s' 2>/dev/null
 
-echo -e "${GREEN}✓ Node.js 和 Moltbot 安装成功${NC}"
+echo -e "${GREEN}✓ Node.js and Moltbot installed successfully${NC}"
 echo ""
 
-# 步骤 7: 部署配置
-echo -e "${BLUE}[步骤 7/8] 部署 Moltbot 配置...${NC}"
+# Step 7: Deploy configuration
+echo -e "${BLUE}[Step 7/8] Deploying Moltbot configuration...${NC}"
 
-# 写入配置文件
+# Write config file
 echo "$MOLTBOT_CONFIG" | ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
     -i ~/.ssh/id_rsa \
     "${ADMIN_USER}@${VM_PUBLIC_IP}" \
     "cat > ~/.clawdbot/clawdbot.json" 2>/dev/null
 
-echo -e "${GREEN}✓ 配置已部署${NC}"
+echo -e "${GREEN}✓ Configuration deployed${NC}"
 echo ""
 
-# 步骤 8: 创建 systemd 服务并启动
-echo -e "${BLUE}[步骤 8/8] 创建服务并启动 Moltbot...${NC}"
+# Step 8: Create systemd service and start
+echo -e "${BLUE}[Step 8/8] Creating service and starting Moltbot...${NC}"
 
 SERVICE_SCRIPT=$(cat <<EOF
 #!/bin/bash
 export PATH="\$HOME/.npm-global/bin:\$PATH"
 
-# 创建 systemd 服务
+# Create systemd service
 sudo tee /etc/systemd/system/moltbot.service > /dev/null <<'EOFSERVICE'
 [Unit]
 Description=Moltbot Gateway
@@ -330,19 +330,19 @@ RestartSec=10
 WantedBy=multi-user.target
 EOFSERVICE
 
-# 启动服务
+# Start service
 sudo systemctl daemon-reload
 sudo systemctl enable moltbot
 sudo systemctl start moltbot
 
-# 等待服务启动
+# Wait for service to start
 sleep 3
 
-# 检查状态
+# Check status
 if sudo systemctl is-active --quiet moltbot; then
-    echo "服务启动成功!"
+    echo "Service started successfully!"
 else
-    echo "服务启动失败，查看日志:"
+    echo "Service failed to start, checking logs:"
     sudo journalctl -u moltbot -n 20 --no-pager
     exit 1
 fi
@@ -354,33 +354,33 @@ echo "$SERVICE_SCRIPT" | ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/
     "${ADMIN_USER}@${VM_PUBLIC_IP}" \
     'bash -s' 2>/dev/null
 
-echo -e "${GREEN}✓ Moltbot 服务已启动${NC}"
+echo -e "${GREEN}✓ Moltbot service started${NC}"
 echo ""
 
-# 完成
+# Done
 echo -e "${GREEN}========================================${NC}"
-echo -e "${GREEN}  🎉 Moltbot 部署完成!${NC}"
+echo -e "${GREEN}  🎉 Moltbot Deployment Complete!${NC}"
 echo -e "${GREEN}========================================${NC}"
 echo ""
-echo -e "${BLUE}访问信息:${NC}"
+echo -e "${BLUE}Access Information:${NC}"
 echo "  VM IP: $VM_PUBLIC_IP"
 echo "  Gateway URL: http://${VM_PUBLIC_IP}:${GATEWAY_PORT}"
 echo "  Gateway Token: ${GATEWAY_TOKEN}"
 echo ""
-echo -e "${BLUE}SSH 连接:${NC}"
+echo -e "${BLUE}SSH Connection:${NC}"
 echo "  ssh ${ADMIN_USER}@${VM_PUBLIC_IP}"
 echo ""
-echo -e "${BLUE}管理服务:${NC}"
+echo -e "${BLUE}Manage Service:${NC}"
 echo "  ssh ${ADMIN_USER}@${VM_PUBLIC_IP} 'sudo systemctl status moltbot'"
 echo "  ssh ${ADMIN_USER}@${VM_PUBLIC_IP} 'sudo systemctl restart moltbot'"
 echo ""
-echo -e "${YELLOW}下一步:${NC}"
-echo "  1. 访问 Dashboard: http://${VM_PUBLIC_IP}:${GATEWAY_PORT}"
-echo "  2. 输入 Gateway Token 进行认证"
-echo "  3. 配置 WhatsApp: moltbot channels login"
+echo -e "${YELLOW}Next Steps:${NC}"
+echo "  1. Access Dashboard: http://${VM_PUBLIC_IP}:${GATEWAY_PORT}"
+echo "  2. Enter Gateway Token for authentication"
+echo "  3. Configure WhatsApp: moltbot channels login"
 echo ""
-echo -e "${YELLOW}费用提醒:${NC}"
-echo "  VM $VM_SIZE: ~\$60/月"
-echo "  Azure OpenAI GPT-5: 按用量计费"
-echo "  总计: ~\$65-100/月"
+echo -e "${YELLOW}Cost Estimate:${NC}"
+echo "  VM $VM_SIZE: ~\$60/month"
+echo "  Azure OpenAI GPT-5: Pay-per-use"
+echo "  Total: ~\$65-100/month"
 echo ""
