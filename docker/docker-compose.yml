@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  moltbot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: moltbot
+    ports:
+      - "18789:18789"
+    volumes:
+      - ./config:/root/.clawdbot:ro
+      - moltbot-data:/root/clawd
+    environment:
+      - AZURE_RESOURCE_NAME=${AZURE_RESOURCE_NAME}
+      - AZURE_API_KEY=${AZURE_API_KEY}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "moltbot", "health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  moltbot-data:

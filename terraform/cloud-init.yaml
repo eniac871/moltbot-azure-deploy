@@ -1,0 +1,32 @@
+#cloud-config
+package_update: true
+package_upgrade: true
+
+packages:
+  - curl
+  - git
+  - ca-certificates
+  - gnupg
+  - lsb-release
+
+runcmd:
+  # Install Node.js 22
+  - curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+  - apt-get install -y nodejs
+  
+  # Install Moltbot
+  - curl -fsSL https://molt.bot/install.sh | bash
+  
+  # Create Moltbot config directory
+  - mkdir -p /home/azureuser/.clawdbot
+  - mkdir -p /home/azureuser/clawd
+  
+  # Set proper ownership
+  - chown -R azureuser:azureuser /home/azureuser/.clawdbot
+  - chown -R azureuser:azureuser /home/azureuser/clawd
+  
+  # Enable and start Moltbot service (will be configured manually)
+  - echo "Moltbot installed successfully"
+  - echo "Please configure ~/.clawdbot/clawdbot.json with your Azure OpenAI credentials"
+
+final_message: "Moltbot VM setup complete! SSH in and configure your Azure OpenAI settings."
